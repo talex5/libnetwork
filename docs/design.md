@@ -10,7 +10,7 @@ Please refer to this [Docker v1.6 Design](legacy.md) document for more informati
 
 ## Goal
 
-libnetwork project will follow Docker and Linux philosophy of developing small, highly modular and composable tools that work well independently.
+The libnetwork project follows the Docker and Linux philosophy of developing small, highly modular and composable tools that work well independently.
 Libnetwork aims to satisfy that composable need for Networking in Containers.
 
 ## The Container Network Model
@@ -18,6 +18,9 @@ Libnetwork aims to satisfy that composable need for Networking in Containers.
 Libnetwork implements Container Network Model (CNM) which formalizes the steps required to provide networking for containers while providing an abstraction that can be used to support multiple network drivers. The CNM is built on 3 main components (shown below)
 
 ![](/docs/cnm-model.jpg?raw=true)
+
+XXX: This diagram is really confusing when considering overlay networks (which are the default).
+There, you have both a "container sandbox" (which the diagram calls the "Network Sandbox") and a separate network sandbox (which connects the network to all of that network's containers on a single host).
 
 **Sandbox**
 
@@ -30,7 +33,7 @@ A Sandbox may contain *many* endpoints from *multiple* networks.
 
 An Endpoint joins a Sandbox to a Network.
 An implementation of an Endpoint could be a `veth` pair, an Open vSwitch internal port or similar.
-An Endpoint can belong to *only one* network but may only belong to *one* Sandbox.
+An Endpoint can belong to *only one* network and to *only one* Sandbox.
 
 **Network**
 
@@ -41,10 +44,22 @@ Networks consist of *many* endpoints.
 ## CNM Objects
 
 **NetworkController**
-`NetworkController` object provides the entry-point into libnetwork that exposes simple APIs for the users (such as Docker Engine) to allocate and manage Networks. libnetwork supports multiple active drivers (both inbuilt and remote). `NetworkController` allows user to bind a particular driver to a given network.
+`NetworkController` object provides the entry-point into libnetwork. It exposes simple APIs for the users (such as Docker Engine) to allocate and manage Networks. libnetwork supports multiple active drivers (both inbuilt and remote). `NetworkController` allows the user to bind a particular driver to a given network.
 
 **Driver**
-`Driver` is not a user visible object, but drivers provides the actual implementation that makes network work. `NetworkController` however provides an API to configure any specific driver with driver-specific options/labels that is transparent to libnetwork, but can be handled by the drivers directly. Drivers can be both inbuilt (such as Bridge, Host, None & overlay) and remote (from plugin providers) to satisfy various usecases & deployment scenarios. At this point, the Driver owns a network and is responsible for managing the network (including IPAM, etc.). This can be improved in the future by having multiple drivers participating in handling various network management functionalities.
+`Driver` is not a user visible object, but drivers provide the actual implementation that makes networking work. 
+`NetworkController` however provides an API to configure any specific driver with driver-specific options/labels that is transparent to libnetwork, but can be handled by the drivers directly.
+There are both network drivers and IPAM drivers (which allocate IP addresses).
+Drivers can be both inbuilt (such as Bridge, Host, None & overlay) and remote (from plugin providers) to satisfy various usecases & deployment scenarios. A network driver owns its network and is responsible for managing it.
+
+libnetwork (not the driver) is responsible for the container sandbox, including DNS, service discovery and load balancing across service replicas.
+For example, if a container tries to connect to a backend database service named `db`:
+1. The application gets the DNS server from `/etc/resolv.conf`. Docker sets this to `127.0.0.11`.
+2. The application makes a query for the service name `db`. This request is forwarded to the Docker daemon.
+3. The daemon returns the service's Virtual IP (VIP).
+4. The application tries to connect to the VIP.
+5. iptables and ipvs rules inside the container sandbox choose a task IP for a particular replica of the service and NAT the request to that address.
+6. The request leaves the container sandbox by a virtual ethernet device, the other end of which is owned by the network driver.
 
 **Network**
 `Network` object is an implementation of the `CNM : Network` as defined above. `NetworkController` provides APIs to create and manage `Network` object. Whenever a `Network` is created or updated, the corresponding `Driver` will be notified of the event. LibNetwork treats `Network` object at an abstract level to provide connectivity between a group of end-points that belong to the same network and isolate from the rest. The Driver performs the actual work of providing the required connectivity and isolation. The connectivity can be within the same host or across multiple-hosts. Hence `Network` has a global scope within a cluster.
